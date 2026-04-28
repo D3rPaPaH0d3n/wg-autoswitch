@@ -15,7 +15,10 @@ public class MainWorker : BackgroundService
     // Hysterese: zähle aufeinanderfolgende identische Detection-Ergebnisse
     private bool? _lastSeen;
     private int _consecutiveCount;
-    private bool _appliedAtHome; // letzter Zustand, den wir auf die Tunnel angewandt haben
+    // null = wir haben noch nie aktiv geschaltet, also beim ersten stabilen
+    // Resultat zwingend einmal anwenden (sonst bleibt der Tunnel beim Erst-
+    // Start "unterwegs" hängen, falls er gerade aus ist).
+    private bool? _appliedAtHome;
 
     public MainWorker(ILogger<MainWorker> log, ServiceState state,
                       NetworkDetector detector, TunnelController controller)

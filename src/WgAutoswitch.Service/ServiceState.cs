@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using WgAutoswitch.Shared;
 
 namespace WgAutoswitch.Service;
@@ -16,7 +17,8 @@ public class ServiceState
     public DateTime LastChange { get; set; }
     public string LastChangeReason { get; set; } = "";
 
-    public Dictionary<string, TunnelStatus> CurrentTunnels { get; } = new();
+    // Wird vom MainWorker geschrieben, vom Pipe-Server gelesen → thread-safe.
+    public ConcurrentDictionary<string, TunnelStatus> CurrentTunnels { get; } = new();
 
     public event Action? StateChanged;
     public void NotifyChanged() => StateChanged?.Invoke();
@@ -39,7 +41,7 @@ public class ServiceState
                 AutoModeEnabled: AutoModeEnabled,
                 AtHome: LastAtHome,
                 LastDetectionReason: LastDetectionReason,
-                Tunnels: new Dictionary<string, TunnelStatus>(CurrentTunnels),
+                Tunnels: CurrentTunnels.ToDictionary(kv => kv.Key, kv => kv.Value),
                 LastChange: LastChange,
                 LastChangeReason: LastChangeReason
             );
