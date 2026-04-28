@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WgAutoswitch.Shared;
 
@@ -15,6 +16,15 @@ public class TrayApp : ApplicationContext
     // Hysterese gegen Pipe-Aussetzer: erst nach mehreren Fehlern in Folge auf rot
     private int _consecutiveErrors;
     private const int ErrorThreshold = 3;
+    // Icons werden einmal beim Start gerendert und wiederverwendet, damit
+    // keine HICON-Handles geleakt werden (Bitmap.GetHicon erzeugt Win32-Handles,
+    // die nicht von Icon.Dispose freigegeben werden).
+    private readonly Dictionary<IconState, Icon> _icons = new();
+    private readonly List<IntPtr> _ownedIconHandles = new();
+    private IconState _currentIconState = (IconState)(-1);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(IntPtr hIcon);
 
     private ToolStripMenuItem _miStatus = null!;
     private ToolStripMenuItem _miPause = null!;
@@ -26,6 +36,7 @@ public class TrayApp : ApplicationContext
 
     public TrayApp()
     {
+        BuildIcons();
         BuildMenu();
         _icon.Text = "wg-autoswitch";
         _icon.Visible = true;
@@ -38,6 +49,21 @@ public class TrayApp : ApplicationContext
 
         _ = RefreshAsync();
     }
+
+    private void BuildIcons()
+    {
+        foreach (IconState s in Enum.GetValues<IconState>())
+            _icons[s] = MakeCircleIcon(ColorFor(s));
+    }
+
+    private static Color ColorFor(IconState s) => s switch
+    {
+        IconState.Home   => Color.FromArgb(76, 175, 80),    // grün
+        IconState.Away   => Color.FromArgb(33, 150, 243),   // blau
+        IconState.Paused => Color.FromArgb(158, 158, 158),  // grau
+        IconState.Error  => Color.FromArgb(244, 67, 54),    // rot
+        _                => Color.FromArgb(120, 120, 120),  // Unknown
+    };
 
     private void BuildMenu()
     {
@@ -171,23 +197,18 @@ public class TrayApp : ApplicationContext
         _ = RefreshAsync();
     }
 
-    // Generiert farbige Tray-Icons live, kein Asset-Pflegen nötig
     private enum IconState { Home, Away, Paused, Error, Unknown }
+
     private void SetIcon(IconState s)
     {
-        var color = s switch
-        {
-            IconState.Home => Color.FromArgb(76, 175, 80),    // grün
-            IconState.Away => Color.FromArgb(33, 150, 243),   // blau
-            IconState.Paused => Color.FromArgb(158, 158, 158),// grau
-            IconState.Error => Color.FromArgb(244, 67, 54),   // rot
-            _ => Color.FromArgb(120, 120, 120),
-        };
-        _icon.Icon?.Dispose();
-        _icon.Icon = MakeCircleIcon(color);
+        // Nur tatsächlich neu zuweisen wenn sich der Zustand ändert. Spart
+        // bei jedem 3s-Poll-Tick einen NotifyIcon-Update-Roundtrip.
+        if (s == _currentIconState) return;
+        _currentIconState = s;
+        _icon.Icon = _icons[s];
     }
 
-    private static Icon MakeCircleIcon(Color color)
+    private Icon MakeCircleIcon(Color color)
     {
         const int size = 32;
         using var bmp = new Bitmap(size, size);
@@ -199,7 +220,11 @@ public class TrayApp : ApplicationContext
             using var pen = new Pen(Color.White, 2);
             g.DrawEllipse(pen, 2, 2, size - 4, size - 4);
         }
+        // Bitmap.GetHicon legt ein Win32-HICON an, das Icon.Dispose NICHT
+        // freigibt - wir merken uns den Handle und räumen ihn explizit
+        // im Dispose des TrayApp wieder weg.
         IntPtr hIcon = bmp.GetHicon();
+        _ownedIconHandles.Add(hIcon);
         return Icon.FromHandle(hIcon);
     }
 
@@ -210,6 +235,10 @@ public class TrayApp : ApplicationContext
             _icon.Visible = false;
             _icon.Dispose();
             _pollTimer.Dispose();
+            foreach (var icon in _icons.Values) icon.Dispose();
+            _icons.Clear();
+            foreach (var handle in _ownedIconHandles) DestroyIcon(handle);
+            _ownedIconHandles.Clear();
         }
         base.Dispose(disposing);
     }
