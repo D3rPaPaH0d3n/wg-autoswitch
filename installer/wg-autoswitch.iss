@@ -1,0 +1,261 @@
+; ===========================================================
+; wg-autoswitch Installer
+; Inno Setup Skript - benötigt Inno Setup 6.2 oder neuer
+; https://jrsoftware.org/isdl.php
+; ===========================================================
+
+#define MyAppName "WireGuard Auto-Switch"
+#define MyAppShortName "wg-autoswitch"
+#define MyAppVersion "1.0.0"
+#define MyAppPublisher "Markus Kainer"
+#define MyAppURL "https://kainer.co.at"
+#define MyServiceName "wg-autoswitch"
+#define MyServiceExe "WgAutoswitch.Service.exe"
+#define MyTrayExe "WgAutoswitch.Tray.exe"
+
+[Setup]
+AppId={{8B7E2F4A-9C3D-4E5B-A1F2-3D4E5F6A7B8C}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+DefaultDirName={autopf}\{#MyAppShortName}
+DefaultGroupName={#MyAppName}
+DisableProgramGroupPage=yes
+OutputDir=output
+OutputBaseFilename=wg-autoswitch-setup-{#MyAppVersion}
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+MinVersion=10.0.17763
+UninstallDisplayName={#MyAppName}
+UninstallDisplayIcon={app}\{#MyTrayExe}
+SetupLogging=yes
+CloseApplications=force
+
+[Languages]
+Name: "german"; MessagesFile: "compiler:Languages\German.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "autostart"; Description: "Tray-Symbol bei Windows-Anmeldung automatisch starten"; GroupDescription: "Verknüpfungen:"; Flags: checkedonce
+
+[Files]
+; Service-Binary - alle Dateien aus dem Publish-Output
+Source: "..\src\WgAutoswitch.Service\bin\Release\net8.0-windows\publish\*"; DestDir: "{app}\service"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; Tray-Binary
+Source: "..\src\WgAutoswitch.Tray\bin\Release\net8.0-windows\publish\*"; DestDir: "{app}\tray"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; Doku
+Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\QUICKGUIDE.md"; DestDir: "{app}"; Flags: ignoreversion
+
+[Dirs]
+; Programmdaten-Verzeichnis mit passenden Rechten anlegen
+Name: "{commonappdata}\wg-autoswitch"; Permissions: users-modify
+
+[Icons]
+Name: "{group}\{#MyAppName} - Tray starten"; Filename: "{app}\tray\{#MyTrayExe}"
+Name: "{group}\Konfiguration bearbeiten"; Filename: "notepad.exe"; Parameters: """{commonappdata}\wg-autoswitch\config.toml"""
+Name: "{group}\Log öffnen"; Filename: "notepad.exe"; Parameters: """{commonappdata}\wg-autoswitch\log.txt"""
+Name: "{group}\Quickguide"; Filename: "{app}\QUICKGUIDE.md"
+Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
+
+; Autostart per Verknüpfung im Startup-Ordner (wird nur erstellt, wenn Task gewählt)
+Name: "{userstartup}\{#MyAppName} Tray"; Filename: "{app}\tray\{#MyTrayExe}"; Tasks: autostart
+
+[Run]
+; 1. Falls Service schon existiert (Update-Fall), erst stoppen und löschen
+Filename: "{sys}\sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; StatusMsg: "Stoppe alten Dienst (falls vorhanden)..."
+Filename: "{sys}\sc.exe"; Parameters: "delete {#MyServiceName}"; Flags: runhidden; StatusMsg: "Entferne alten Dienst (falls vorhanden)..."
+
+; 2. Neuen Service registrieren
+Filename: "{sys}\sc.exe"; Parameters: "create {#MyServiceName} binPath= ""\""{app}\service\{#MyServiceExe}\"""" DisplayName= ""{#MyAppName}"" start= auto"; Flags: runhidden; StatusMsg: "Registriere Windows-Dienst..."
+Filename: "{sys}\sc.exe"; Parameters: "description {#MyServiceName} ""Aktiviert oder deaktiviert WireGuard-Tunnel automatisch je nach Netzwerk."""; Flags: runhidden
+Filename: "{sys}\sc.exe"; Parameters: "failure {#MyServiceName} reset= 86400 actions= restart/5000/restart/10000/restart/30000"; Flags: runhidden
+
+; 3. Service starten
+Filename: "{sys}\sc.exe"; Parameters: "start {#MyServiceName}"; Flags: runhidden; StatusMsg: "Starte Dienst..."
+
+; 4. Tray sofort starten und Quickguide anbieten (Postinstall-Optionen)
+Filename: "{app}\tray\{#MyTrayExe}"; Description: "Tray-Symbol jetzt starten"; Flags: postinstall nowait skipifsilent
+Filename: "notepad.exe"; Parameters: """{app}\QUICKGUIDE.md"""; Description: "Quickguide öffnen"; Flags: postinstall shellexec skipifsilent
+
+[UninstallRun]
+; Beim Deinstallieren: Tray killen, Service stoppen und entfernen
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#MyTrayExe}"; Flags: runhidden; RunOnceId: "KillTray"
+Filename: "{sys}\sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; RunOnceId: "StopSvc"
+Filename: "{sys}\sc.exe"; Parameters: "delete {#MyServiceName}"; Flags: runhidden; RunOnceId: "DelSvc"
+
+[UninstallDelete]
+; Logs im ProgramData-Ordner aufräumen, Config behalten falls gewünscht
+Type: files; Name: "{commonappdata}\wg-autoswitch\log.txt"
+
+[Code]
+// =====================================================================
+// Setup-Wizard mit zusätzlichen Seiten für die Konfiguration
+// =====================================================================
+
+var
+  ConfigPage: TInputQueryWizardPage;
+  WireGuardCheckPage: TOutputMsgMemoWizardPage;
+
+procedure InitializeWizard;
+begin
+  // Hinweisseite: WireGuard muss vorab installiert sein
+  WireGuardCheckPage := CreateOutputMsgMemoPage(wpWelcome,
+    'Voraussetzungen', 'Bitte vorher prüfen',
+    'Damit dieser Auto-Switch funktioniert, muss Folgendes bereits eingerichtet sein:',
+    'WICHTIG - bitte vor der Installation prüfen:' + #13#10 +
+    '' + #13#10 +
+    '1) WireGuard für Windows ist installiert.' + #13#10 +
+    '   Download: https://www.wireguard.com/install/' + #13#10 +
+    '' + #13#10 +
+    '2) Mindestens ein Tunnel ist in WireGuard angelegt und' + #13#10 +
+    '   funktioniert manuell. Der Tunnelname (z.B. "home")' + #13#10 +
+    '   wird gleich gebraucht.' + #13#10 +
+    '' + #13#10 +
+    '3) MAC-Adresse deines Routers (FritzBox o.ä.):' + #13#10 +
+    '   - Eingabeaufforderung als Admin starten' + #13#10 +
+    '   - Befehl eingeben:  arp -a' + #13#10 +
+    '   - In der Liste die IP des Routers suchen (z.B. 192.168.178.1)' + #13#10 +
+    '   - Daneben steht die "Physische Adresse" - das ist die MAC' + #13#10 +
+    '     im Format aa-bb-cc-dd-ee-ff' + #13#10 +
+    '' + #13#10 +
+    '4) Optional: SSID deines Heim-WLAN' + #13#10 +
+    '5) Optional: IP eines Geräts, das nur zuhause erreichbar ist' + #13#10 +
+    '   (z.B. dein NAS oder Pi)');
+
+  // Konfigurationsseite mit Eingabefeldern
+  ConfigPage := CreateInputQueryPage(wpSelectTasks,
+    'Konfiguration', 'Grunddaten für den Auto-Switch',
+    'Diese Werte werden in die Konfigurationsdatei geschrieben. ' +
+    'Du kannst sie später jederzeit anpassen über Startmenü → Konfiguration bearbeiten.');
+
+  ConfigPage.Add('Tunnelname (genau wie in WireGuard):', False);
+  ConfigPage.Add('Router-MAC (Format aa-bb-cc-dd-ee-ff):', False);
+  ConfigPage.Add('Heim-WLAN-Name / SSID (optional):', False);
+  ConfigPage.Add('IP eines Heim-Geräts (optional, z.B. NAS):', False);
+  ConfigPage.Add('Port auf diesem Gerät (Standard 22 = SSH):', False);
+
+  ConfigPage.Values[0] := 'home';
+  ConfigPage.Values[4] := '22';
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  TunnelName, Mac: string;
+begin
+  Result := True;
+  if CurPageID = ConfigPage.ID then
+  begin
+    TunnelName := Trim(ConfigPage.Values[0]);
+    Mac := Trim(ConfigPage.Values[1]);
+
+    if TunnelName = '' then
+    begin
+      MsgBox('Bitte einen Tunnelnamen eingeben.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+
+    if (Mac <> '') and (Length(Mac) <> 17) then
+    begin
+      if MsgBox('Die MAC-Adresse sieht ungewöhnlich aus.' + #13#10 +
+                'Erwartetes Format: aa-bb-cc-dd-ee-ff (17 Zeichen).' + #13#10 + #13#10 +
+                'Trotzdem fortfahren?', mbConfirmation, MB_YESNO) = IDNO then
+      begin
+        Result := False;
+        Exit;
+      end;
+    end;
+  end;
+end;
+
+// Schreibt eine simple TOML-Konfiguration aus den Wizard-Eingaben
+procedure WriteInitialConfig();
+var
+  ConfigPath, ConfigContent: string;
+  TunnelName, Mac, Ssid, ReachableHost, ReachablePort: string;
+begin
+  TunnelName := Trim(ConfigPage.Values[0]);
+  Mac := Trim(ConfigPage.Values[1]);
+  Ssid := Trim(ConfigPage.Values[2]);
+  ReachableHost := Trim(ConfigPage.Values[3]);
+  ReachablePort := Trim(ConfigPage.Values[4]);
+
+  ConfigPath := ExpandConstant('{commonappdata}\wg-autoswitch\config.toml');
+
+  // Nur überschreiben, wenn noch keine Config da ist (Update-Schutz)
+  if FileExists(ConfigPath) then
+    Exit;
+
+  ForceDirectories(ExpandConstant('{commonappdata}\wg-autoswitch'));
+
+  ConfigContent :=
+    '# wg-autoswitch Konfiguration' + #13#10 +
+    '# Bei Aenderungen: Tray-Rechtsklick -> "Konfiguration neu laden"' + #13#10 +
+    '' + #13#10 +
+    '[general]' + #13#10 +
+    'enabled = true' + #13#10 +
+    'check_interval_seconds = 10' + #13#10 +
+    'hysteresis_count = 2' + #13#10 +
+    'min_checks_required = 2' + #13#10 +
+    '' + #13#10 +
+    '[[tunnels]]' + #13#10 +
+    'name = "' + TunnelName + '"' + #13#10 +
+    '' + #13#10 +
+    '[home_detection]' + #13#10;
+
+  if Mac <> '' then
+    ConfigContent := ConfigContent + 'gateway_mac = "' + Mac + '"' + #13#10;
+  if Ssid <> '' then
+    ConfigContent := ConfigContent + 'ssid = "' + Ssid + '"' + #13#10;
+  if ReachableHost <> '' then
+  begin
+    ConfigContent := ConfigContent + 'reachable_host = "' + ReachableHost + '"' + #13#10;
+    if ReachablePort = '' then ReachablePort := '22';
+    ConfigContent := ConfigContent + 'reachable_port = ' + ReachablePort + #13#10;
+  end;
+
+  if not SaveStringToFile(ConfigPath, ConfigContent, False) then
+    MsgBox('Konfigurationsdatei konnte nicht geschrieben werden:' + #13#10 + ConfigPath,
+           mbError, MB_OK);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  // Config schreiben, bevor der Service gestartet wird
+  if CurStep = ssPostInstall then
+    WriteInitialConfig();
+end;
+
+// Vor der Deinstallation den Tray-Prozess sauber beenden
+function InitializeUninstall(): Boolean;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM ' + '{#MyTrayExe}',
+       '', SW_HIDE, ewWaitUntilTerminated, 0);
+  Result := True;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  KeepConfig: Integer;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    KeepConfig := MsgBox('Konfigurationsdatei behalten?' + #13#10 + #13#10 +
+                         'Bei "Ja" bleibt deine Konfiguration für eine spätere ' +
+                         'Neuinstallation erhalten.' + #13#10 +
+                         'Bei "Nein" werden alle Daten von wg-autoswitch entfernt.',
+                         mbConfirmation, MB_YESNO);
+    if KeepConfig = IDNO then
+      DelTree(ExpandConstant('{commonappdata}\wg-autoswitch'), True, True, True);
+  end;
+end;

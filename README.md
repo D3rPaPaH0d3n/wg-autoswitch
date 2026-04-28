@@ -1,0 +1,133 @@
+# wg-autoswitch
+
+Automatisches Aktivieren/Deaktivieren eines WireGuard-Tunnels unter Windows
+basierend auf der Erkennung des Heimnetzwerks. Mit Tray-Icon zur Statusanzeige
+und Pause-Funktion als Notausschalter.
+
+## Aufbau
+
+- **WgAutoswitch.Service** - Windows-Dienst (LocalSystem), macht die eigentliche Arbeit
+- **WgAutoswitch.Tray** - User-Tray-App, zeigt Status und steuert per Named Pipe
+- **WgAutoswitch.Shared** - Geteilte Modelle und IPC-Protokoll
+
+## Build
+
+Drei Wege:
+
+**A) Cloud-Build via GitHub Actions** (keine lokale Installation nötig) →
+siehe [CLOUD-BUILD.md](CLOUD-BUILD.md)
+
+**B) Lokaler Schnellweg: alles inkl. Installer**
+
+Voraussetzungen:
+- .NET 8 SDK ([dot.net](https://dot.net))
+- Inno Setup 6 ([jrsoftware.org/isdl.php](https://jrsoftware.org/isdl.php))
+
+Dann einfach:
+```powershell
+.\build.bat
+```
+
+Ergebnis: `installer\output\wg-autoswitch-setup-1.0.0.exe`
+
+Das ist die Datei, die du an Endnutzer weitergibst.
+
+### Nur Code bauen, kein Installer (lokal)
+
+```powershell
+dotnet build -c Release WgAutoswitch.sln
+```
+
+### Self-contained Publish (was der Installer braucht)
+
+```powershell
+dotnet publish src\WgAutoswitch.Service -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+dotnet publish src\WgAutoswitch.Tray -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+```
+
+## Installation
+
+**Für Endnutzer:** Den Installer `wg-autoswitch-setup-1.0.0.exe` ausführen
+und der Anleitung im [QUICKGUIDE.md](QUICKGUIDE.md) folgen.
+
+**Manuell (für Entwicklung):**
+
+Vorbedingung: Der WireGuard-Tunnel muss schon in WireGuard für Windows
+importiert sein, der Service `WireGuardTunnel$<name>` muss existieren.
+
+### Service installieren
+
+Als Admin in PowerShell:
+
+```powershell
+sc create wg-autoswitch binPath= "C:\Tools\wg-autoswitch\WgAutoswitch.Service.exe" `
+    DisplayName= "WireGuard Auto-Switch" `
+    start= auto
+sc description wg-autoswitch "Aktiviert/deaktiviert WireGuard-Tunnel je nach Netzwerk."
+sc start wg-autoswitch
+```
+
+### Tray automatisch starten
+
+Verknüpfung von `WgAutoswitch.Tray.exe` in den Autostart legen:
+```
+%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+```
+
+## Konfiguration
+
+Beim ersten Start des Service wird `C:\ProgramData\wg-autoswitch\config.toml`
+mit Default-Werten erzeugt. Anpassen:
+
+```toml
+[general]
+enabled = true
+check_interval_seconds = 10
+hysteresis_count = 2          # Wieviele aufeinanderfolgende gleiche Ergebnisse vor Wechsel
+min_checks_required = 2       # Mindestens N positive Checks für "zuhause"
+
+[[tunnels]]
+name = "home"                 # Entspricht dem Service WireGuardTunnel$home
+
+[home_detection]
+gateway_mac = "AA:BB:CC:DD:EE:FF"  # MAC der FritzBox 5690 Pro
+ssid = "DeinWLAN"
+reachable_host = "192.168.178.5"   # Pi DNS-Master
+reachable_port = 53
+```
+
+Nach Änderungen entweder Service neustarten oder im Tray
+"Konfiguration neu laden" klicken.
+
+## Notausschalter (mehrere Ebenen)
+
+| Ebene | Was passiert | Wie |
+|---|---|---|
+| 1 | Auto-Modus pausieren | Tray-Rechtsklick → "Auto-Modus pausieren" |
+| 2 | Service stoppen | `sc stop wg-autoswitch` |
+| 3 | Service deaktivieren | `sc config wg-autoswitch start= disabled` |
+| 4 | Komplett weg | `sc delete wg-autoswitch` |
+
+WireGuard selbst wird nie verändert. Wenn der Service weg ist, bleibt
+alles wie zuletzt - kein "Panik-Aus".
+
+## Logs
+
+- Windows Event Log: Anwendung, Quelle "wg-autoswitch"
+- `C:\ProgramData\wg-autoswitch\log.txt` (von der File-Logging-Erweiterung,
+  derzeit nur Event-Log konfiguriert - siehe TODO)
+
+## Tray-Icon-Farben
+
+- 🟢 Grün - zuhause erkannt, Tunnel aus
+- 🔵 Blau - unterwegs erkannt, Tunnel an
+- ⚪ Grau - Auto-Modus pausiert
+- 🔴 Rot - Service nicht erreichbar oder Fehler
+
+## TODO / Erweiterungen
+
+- File-Logging mit Rotation (Serilog wäre sauber)
+- Optional: Settings-Dialog statt nur Notepad
+- Optional: Heim-Erkennung über Cloudflare-Tunnel-Status
+- Optional: per-Tunnel-Konfiguration (verschiedene Tunnel für verschiedene Netze)
+- Installer-MSI oder Inno-Setup-Skript
