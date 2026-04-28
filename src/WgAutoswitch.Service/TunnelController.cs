@@ -9,6 +9,15 @@ public class TunnelController
 {
     private readonly ILogger<TunnelController> _log;
 
+    // Standard-Pfad von WireGuard für Windows
+    private static readonly string WireGuardExe = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+        "WireGuard", "wireguard.exe");
+
+    private static readonly string ConfigDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+        "WireGuard", "Data", "Configurations");
+
     public TunnelController(ILogger<TunnelController> log)
     {
         _log = log;
@@ -22,7 +31,6 @@ public class TunnelController
         try
         {
             using var sc = new ServiceController(svcName);
-            // Refresh erzwingt einen Lookup
             sc.Refresh();
             var status = sc.Status switch
             {
@@ -36,7 +44,12 @@ public class TunnelController
         }
         catch (InvalidOperationException)
         {
-            return new TunnelStatus(tunnelName, false, "NotInstalled");
+            // WireGuard hängt den Tunnel-Service erst beim Aktivieren ein und löscht ihn
+            // beim Deaktivieren wieder. "Service existiert nicht" heißt also: Tunnel ist
+            // entweder gerade nicht aktiv (Config liegt aber vor) oder gar nicht importiert.
+            return ConfigExists(tunnelName)
+                ? new TunnelStatus(tunnelName, false, "Inactive")
+                : new TunnelStatus(tunnelName, false, "NotInstalled");
         }
         catch (Exception ex)
         {
@@ -47,45 +60,108 @@ public class TunnelController
 
     public async Task<bool> SetActiveAsync(string tunnelName, bool activate, CancellationToken ct)
     {
-        var svcName = ServiceNameFor(tunnelName);
         try
         {
-            using var sc = new ServiceController(svcName);
+            var current = GetStatus(tunnelName);
+
             if (activate)
             {
-                if (sc.Status == ServiceControllerStatus.Running) return true;
-                sc.Start();
-                await WaitForStatusAsync(sc, ServiceControllerStatus.Running, ct);
+                if (current.Active) return true;
+
+                var confPath = FindConfigPath(tunnelName);
+                if (confPath == null)
+                {
+                    _log.LogWarning("Config-Datei für Tunnel {Tunnel} nicht gefunden in {Dir}. " +
+                                    "Tunnel zuerst in WireGuard importieren.", tunnelName, ConfigDir);
+                    return false;
+                }
+
+                // wireguard.exe legt den Service an UND startet ihn
+                var ok = await RunWireGuardAsync($"/installtunnelservice \"{confPath}\"", ct);
+                if (!ok) return false;
+
+                // Auf Running warten - WireGuard kommt in der Regel innerhalb 1-3 s hoch
+                return await WaitForServiceStateAsync(tunnelName, expectActive: true, ct);
             }
             else
             {
-                if (sc.Status == ServiceControllerStatus.Stopped) return true;
-                sc.Stop();
-                await WaitForStatusAsync(sc, ServiceControllerStatus.Stopped, ct);
+                // Service nicht da → schon deaktiviert
+                if (current.ServiceState is "NotInstalled" or "Inactive") return true;
+
+                var ok = await RunWireGuardAsync($"/uninstalltunnelservice \"{tunnelName}\"", ct);
+                if (!ok) return false;
+
+                return await WaitForServiceStateAsync(tunnelName, expectActive: false, ct);
             }
-            return true;
-        }
-        catch (InvalidOperationException)
-        {
-            // Tunnel-Service existiert nicht (z.B. Tunnel wurde noch nicht in WireGuard angelegt)
-            _log.LogWarning("Tunnel-Service {Service} existiert nicht. Tunnel zuerst in WireGuard importieren.", svcName);
-            return false;
         }
         catch (Exception ex)
         {
-            _log.LogError(ex, "Tunnel {Tunnel} konnte nicht auf Active={Active} gesetzt werden", tunnelName, activate);
+            _log.LogError(ex, "Tunnel {Tunnel} konnte nicht auf Active={Active} gesetzt werden",
+                          tunnelName, activate);
             return false;
         }
     }
 
-    private static async Task WaitForStatusAsync(ServiceController sc, ServiceControllerStatus target, CancellationToken ct)
+    private static bool ConfigExists(string tunnelName) => FindConfigPath(tunnelName) != null;
+
+    private static string? FindConfigPath(string tunnelName)
+    {
+        var dpapi = Path.Combine(ConfigDir, tunnelName + ".conf.dpapi");
+        if (File.Exists(dpapi)) return dpapi;
+        var conf = Path.Combine(ConfigDir, tunnelName + ".conf");
+        if (File.Exists(conf)) return conf;
+        return null;
+    }
+
+    private async Task<bool> RunWireGuardAsync(string args, CancellationToken ct)
+    {
+        if (!File.Exists(WireGuardExe))
+        {
+            _log.LogError("wireguard.exe nicht gefunden unter {Path}. Ist WireGuard für Windows installiert?",
+                          WireGuardExe);
+            return false;
+        }
+
+        var psi = new ProcessStartInfo(WireGuardExe, args)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+
+        using var p = Process.Start(psi);
+        if (p == null)
+        {
+            _log.LogError("wireguard.exe konnte nicht gestartet werden");
+            return false;
+        }
+
+        await p.WaitForExitAsync(ct);
+
+        if (p.ExitCode != 0)
+        {
+            var err = await p.StandardError.ReadToEndAsync(ct);
+            var outp = await p.StandardOutput.ReadToEndAsync(ct);
+            _log.LogWarning("wireguard.exe {Args} → ExitCode {Code}. Stdout: {Out}. Stderr: {Err}",
+                            args, p.ExitCode, outp, err);
+            return false;
+        }
+        return true;
+    }
+
+    private async Task<bool> WaitForServiceStateAsync(string tunnelName, bool expectActive, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (DateTime.UtcNow < deadline)
         {
-            sc.Refresh();
-            if (sc.Status == target) return;
-            await Task.Delay(250, ct);
+            var s = GetStatus(tunnelName);
+            if (s.Active == expectActive) return true;
+            try { await Task.Delay(250, ct); }
+            catch (OperationCanceledException) { return false; }
         }
+        _log.LogWarning("Tunnel {Tunnel} hat nach 15 s nicht den Zustand Active={Active} erreicht",
+                        tunnelName, expectActive);
+        return false;
     }
 }

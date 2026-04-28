@@ -12,6 +12,9 @@ public class TrayApp : ApplicationContext
     private readonly PipeClient _client = new();
     private readonly System.Windows.Forms.Timer _pollTimer;
     private StatusMessage? _last;
+    // Hysterese gegen Pipe-Aussetzer: erst nach mehreren Fehlern in Folge auf rot
+    private int _consecutiveErrors;
+    private const int ErrorThreshold = 3;
 
     private ToolStripMenuItem _miStatus = null!;
     private ToolStripMenuItem _miPause = null!;
@@ -83,6 +86,12 @@ public class TrayApp : ApplicationContext
         var resp = await _client.SendAsync(new GetStatusCommand(), CancellationToken.None);
         if (!resp.Success || resp.Status == null)
         {
+            _consecutiveErrors++;
+            // Erste paar Fehler tolerieren (Pipe-Server kann zwischen zwei Verbindungen
+            // kurz "weg" sein) - Anzeige unverändert lassen
+            if (_consecutiveErrors < ErrorThreshold && _last != null)
+                return;
+
             _last = null;
             SetIcon(IconState.Error);
             _icon.Text = $"wg-autoswitch: {resp.Error ?? "Service nicht erreichbar"}";
@@ -92,6 +101,7 @@ public class TrayApp : ApplicationContext
             return;
         }
 
+        _consecutiveErrors = 0;
         _last = resp.Status;
         _miPause.Enabled = true;
         _miPause.Text = resp.Status.AutoModeEnabled ? "Auto-Modus pausieren" : "Auto-Modus aktivieren";

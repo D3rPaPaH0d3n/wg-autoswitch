@@ -11,7 +11,10 @@ public class PipeClient
         try
         {
             using var pipe = new NamedPipeClientStream(".", Paths.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-            await pipe.ConnectAsync(2000, ct);
+            // Längerer Timeout damit kurze Engpässe (Service bedient gerade einen anderen
+            // Request, Pipe-Server zwischen zwei Connections) nicht sofort als Fehler
+            // hochkommen.
+            await pipe.ConnectAsync(5000, ct);
 
             using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true };
             using var reader = new StreamReader(pipe, leaveOpen: true);
