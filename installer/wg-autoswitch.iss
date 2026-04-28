@@ -77,19 +77,17 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{userstartup}\{#MyAppName} Tray"; Filename: "{app}\tray\{#MyTrayExe}"; Tasks: autostart
 
 [Run]
-; 1. Falls Service schon existiert (Update-Fall), erst stoppen und löschen
-Filename: "{sys}\sc.exe"; Parameters: "stop {#MyServiceName}"; Flags: runhidden; StatusMsg: "Stoppe alten Dienst (falls vorhanden)..."
-Filename: "{sys}\sc.exe"; Parameters: "delete {#MyServiceName}"; Flags: runhidden; StatusMsg: "Entferne alten Dienst (falls vorhanden)..."
-
-; 2. Neuen Service registrieren
+; Neuen Service registrieren (Stop+Delete eines existierenden Vorgängers
+; passiert schon vor der Datei-Extraktion in CurStepChanged(ssInstall),
+; sonst sind die .exe-Dateien noch gesperrt).
 Filename: "{sys}\sc.exe"; Parameters: "create {#MyServiceName} binPath= ""\""{app}\service\{#MyServiceExe}\"""" DisplayName= ""{#MyAppName}"" start= auto"; Flags: runhidden; StatusMsg: "Registriere Windows-Dienst..."
 Filename: "{sys}\sc.exe"; Parameters: "description {#MyServiceName} ""Aktiviert oder deaktiviert WireGuard-Tunnel automatisch je nach Netzwerk."""; Flags: runhidden
 Filename: "{sys}\sc.exe"; Parameters: "failure {#MyServiceName} reset= 86400 actions= restart/5000/restart/10000/restart/30000"; Flags: runhidden
 
-; 3. Service starten
+; Service starten
 Filename: "{sys}\sc.exe"; Parameters: "start {#MyServiceName}"; Flags: runhidden; StatusMsg: "Starte Dienst..."
 
-; 4. Tray sofort starten und Quickguide anbieten (Postinstall-Optionen)
+; Tray sofort starten und Quickguide anbieten (Postinstall-Optionen)
 Filename: "{app}\tray\{#MyTrayExe}"; Description: "Tray-Symbol jetzt starten"; Flags: postinstall nowait skipifsilent
 Filename: "notepad.exe"; Parameters: """{app}\QUICKGUIDE.md"""; Description: "Quickguide öffnen"; Flags: postinstall shellexec skipifsilent
 
@@ -279,13 +277,41 @@ begin
            mbError, MB_OK);
 end;
 
+// Existierenden Tray + Service stoppen, BEVOR der Datei-Kopier-Schritt
+// versucht, die laufenden .exe-Dateien zu überschreiben. Sonst greift
+// der Restart-Manager und der Installer bricht mit "Anwendungen konnten
+// nicht geschlossen werden" ab.
+procedure StopExistingInstall();
+var
+  ResultCode: Integer;
+begin
+  // Tray killen (läuft als User, hält WgAutoswitch.Tray.exe offen)
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM ' + '{#MyTrayExe}',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(500);
+
+  // Service stoppen (hält WgAutoswitch.Service.exe offen)
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop ' + '{#MyServiceName}',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // sc stop kehrt zurück, sobald der SCM den Stop-Befehl angenommen hat -
+  // der Prozess kann noch ein paar Sekunden brauchen bis er wirklich weg ist
+  Sleep(2500);
+
+  // Service-Eintrag entfernen, damit binPath frei wird
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete ' + '{#MyServiceName}',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1000);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  // Config MUSS vor [Run] (sc start) geschrieben werden, sonst legt der
-  // Service beim ersten Start selbst eine Default-Config an und unsere
-  // FileExists-Prüfung weiter unten verhindert dann das Überschreiben.
   if CurStep = ssInstall then
+  begin
+    // Reihenfolge ist wichtig: erst altes Setup runterfahren (sonst sind die
+    // .exe-Dateien gesperrt), dann ggf. Default-Config rausschreiben.
+    StopExistingInstall();
     WriteInitialConfig();
+  end;
 end;
 
 // Vor der Deinstallation den Tray-Prozess sauber beenden
