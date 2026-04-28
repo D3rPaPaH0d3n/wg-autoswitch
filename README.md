@@ -22,6 +22,13 @@ Aktuelle Version → [**Releases**](https://github.com/D3rPaPaH0d3n/wg-autoswitc
 Voraussetzung: [WireGuard für Windows](https://www.wireguard.com/install/) ist
 bereits installiert und mindestens ein Tunnel ist eingerichtet.
 
+### Updates
+
+Einfach den neuen Installer drüberlaufen lassen — kein Deinstallieren nötig.
+Service wird automatisch gestoppt, getauscht und wieder gestartet, deine
+Konfiguration unter `C:\ProgramData\wg-autoswitch\config.toml` bleibt erhalten.
+Konfig anpassen geht jederzeit über das Tray-Menü → "Konfiguration öffnen".
+
 ## Aufbau
 
 - **WgAutoswitch.Service** - Windows-Dienst (LocalSystem), macht die eigentliche Arbeit

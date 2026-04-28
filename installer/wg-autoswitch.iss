@@ -161,6 +161,21 @@ begin
   ConfigPage.Values[4] := '22';
 end;
 
+// Bei Update (existierende Config) die Konfig-Seiten überspringen.
+// WriteInitialConfig würde die Werte sowieso verwerfen (FileExists-Check),
+// also den User nicht damit verwirren.
+function IsUpgrade(): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{commonappdata}\wg-autoswitch\config.toml'));
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if IsUpgrade() and ((PageID = ConfigPage.ID) or (PageID = WireGuardCheckPage.ID)) then
+    Result := True;
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   TunnelName, Ssid, Mac, ReachableHost: string;
