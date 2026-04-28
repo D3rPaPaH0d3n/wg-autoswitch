@@ -239,9 +239,11 @@ end;
 
 // Vor der Deinstallation den Tray-Prozess sauber beenden
 function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM ' + '{#MyTrayExe}',
-       '', SW_HIDE, ewWaitUntilTerminated, 0);
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := True;
 end;
 
