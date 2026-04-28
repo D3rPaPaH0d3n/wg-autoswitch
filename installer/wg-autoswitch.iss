@@ -122,27 +122,34 @@ begin
     '   funktioniert manuell. Der Tunnelname (z.B. "home")' + #13#10 +
     '   wird gleich gebraucht.' + #13#10 +
     '' + #13#10 +
-    '3) MAC-Adresse deines Routers (FritzBox o.ä.):' + #13#10 +
-    '   - Eingabeaufforderung als Admin starten' + #13#10 +
-    '   - Befehl eingeben:  arp -a' + #13#10 +
-    '   - In der Liste die IP des Routers suchen (z.B. 192.168.178.1)' + #13#10 +
-    '   - Daneben steht die "Physische Adresse" - das ist die MAC' + #13#10 +
-    '     im Format aa-bb-cc-dd-ee-ff' + #13#10 +
+    '3) Mindestens EIN Heim-Indikator. Mehr Indikatoren = sicherer:' + #13#10 +
     '' + #13#10 +
-    '4) Optional: SSID deines Heim-WLAN' + #13#10 +
-    '5) Optional: IP eines Geräts, das nur zuhause erreichbar ist' + #13#10 +
-    '   (z.B. dein NAS oder Pi)');
+    '   a) SSID deines Heim-WLAN  (einfachste Variante)' + #13#10 +
+    '' + #13#10 +
+    '   b) MAC-Adresse deines Routers  (optional, fälschungssicher;' + #13#10 +
+    '      funktioniert auch per LAN-Kabel ohne WLAN)' + #13#10 +
+    '      Ermitteln: Eingabeaufforderung -> "arp -a" -> bei der' + #13#10 +
+    '      Router-IP die "Physische Adresse" ablesen' + #13#10 +
+    '      (Format aa-bb-cc-dd-ee-ff)' + #13#10 +
+    '' + #13#10 +
+    '   c) IP eines Geräts, das nur zuhause erreichbar ist' + #13#10 +
+    '      (optional, z.B. NAS oder Pi)' + #13#10 +
+    '' + #13#10 +
+    'Hinweis: Ein gefälschtes WLAN mit gleicher SSID kann den Tunnel' + #13#10 +
+    'irrtümlich abschalten. Wenn dir das wichtig ist, gib SSID UND' + #13#10 +
+    'Router-MAC ein - dann müssen beide übereinstimmen.');
 
   // Konfigurationsseite mit Eingabefeldern
   ConfigPage := CreateInputQueryPage(wpSelectTasks,
     'Konfiguration', 'Grunddaten für den Auto-Switch',
-    'Diese Werte werden in die Konfigurationsdatei geschrieben. ' +
-    'Du kannst sie später jederzeit anpassen über Startmenü → Konfiguration bearbeiten.');
+    'Tunnelname ist Pflicht. Für die Heim-Erkennung reicht ein Feld; mehrere ' +
+    'erhöhen die Treffsicherheit. Anpassbar später unter Startmenü -> ' +
+    'Konfiguration bearbeiten.');
 
   ConfigPage.Add('Tunnelname (genau wie in WireGuard):', False);
-  ConfigPage.Add('Router-MAC (Format aa-bb-cc-dd-ee-ff):', False);
-  ConfigPage.Add('Heim-WLAN-Name / SSID (optional):', False);
-  ConfigPage.Add('IP eines Heim-Geräts (optional, z.B. NAS):', False);
+  ConfigPage.Add('Heim-WLAN SSID (empfohlen):', False);
+  ConfigPage.Add('Router-MAC, optional - fälschungssicher (aa-bb-cc-dd-ee-ff):', False);
+  ConfigPage.Add('IP eines Heim-Geräts, optional (z.B. 192.168.178.5):', False);
   ConfigPage.Add('Port auf diesem Gerät (Standard 22 = SSH):', False);
 
   ConfigPage.Values[0] := 'home';
@@ -151,17 +158,29 @@ end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  TunnelName, Mac: string;
+  TunnelName, Ssid, Mac, ReachableHost: string;
 begin
   Result := True;
   if CurPageID = ConfigPage.ID then
   begin
-    TunnelName := Trim(ConfigPage.Values[0]);
-    Mac := Trim(ConfigPage.Values[1]);
+    TunnelName    := Trim(ConfigPage.Values[0]);
+    Ssid          := Trim(ConfigPage.Values[1]);
+    Mac           := Trim(ConfigPage.Values[2]);
+    ReachableHost := Trim(ConfigPage.Values[3]);
 
     if TunnelName = '' then
     begin
       MsgBox('Bitte einen Tunnelnamen eingeben.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+
+    if (Ssid = '') and (Mac = '') and (ReachableHost = '') then
+    begin
+      MsgBox('Bitte mindestens einen Heim-Indikator ausfüllen' + #13#10 +
+             '(SSID, Router-MAC oder Heim-Geräte-IP).' + #13#10 + #13#10 +
+             'Sonst kann die App nicht erkennen, ob du zuhause bist.',
+             mbError, MB_OK);
       Result := False;
       Exit;
     end;
@@ -183,11 +202,12 @@ end;
 procedure WriteInitialConfig();
 var
   ConfigPath, ConfigContent: string;
-  TunnelName, Mac, Ssid, ReachableHost, ReachablePort: string;
+  TunnelName, Ssid, Mac, ReachableHost, ReachablePort: string;
+  CheckCount: Integer;
 begin
-  TunnelName := Trim(ConfigPage.Values[0]);
-  Mac := Trim(ConfigPage.Values[1]);
-  Ssid := Trim(ConfigPage.Values[2]);
+  TunnelName    := Trim(ConfigPage.Values[0]);
+  Ssid          := Trim(ConfigPage.Values[1]);
+  Mac           := Trim(ConfigPage.Values[2]);
   ReachableHost := Trim(ConfigPage.Values[3]);
   ReachablePort := Trim(ConfigPage.Values[4]);
 
@@ -199,6 +219,15 @@ begin
 
   ForceDirectories(ExpandConstant('{commonappdata}\wg-autoswitch'));
 
+  // min_checks_required = Anzahl der ausgefüllten Heim-Indikatoren.
+  // Damit "alle ausgefüllten Checks müssen zustimmen" ohne dass der User
+  // den Wert manuell pflegen muss.
+  CheckCount := 0;
+  if Ssid <> ''          then CheckCount := CheckCount + 1;
+  if Mac <> ''           then CheckCount := CheckCount + 1;
+  if ReachableHost <> '' then CheckCount := CheckCount + 1;
+  if CheckCount = 0      then CheckCount := 1;
+
   ConfigContent :=
     '# wg-autoswitch Konfiguration' + #13#10 +
     '# Bei Aenderungen: Tray-Rechtsklick -> "Konfiguration neu laden"' + #13#10 +
@@ -207,17 +236,17 @@ begin
     'enabled = true' + #13#10 +
     'check_interval_seconds = 10' + #13#10 +
     'hysteresis_count = 2' + #13#10 +
-    'min_checks_required = 2' + #13#10 +
+    'min_checks_required = ' + IntToStr(CheckCount) + #13#10 +
     '' + #13#10 +
     '[[tunnels]]' + #13#10 +
     'name = "' + TunnelName + '"' + #13#10 +
     '' + #13#10 +
     '[home_detection]' + #13#10;
 
-  if Mac <> '' then
-    ConfigContent := ConfigContent + 'gateway_mac = "' + Mac + '"' + #13#10;
   if Ssid <> '' then
     ConfigContent := ConfigContent + 'ssid = "' + Ssid + '"' + #13#10;
+  if Mac <> '' then
+    ConfigContent := ConfigContent + 'gateway_mac = "' + Mac + '"' + #13#10;
   if ReachableHost <> '' then
   begin
     ConfigContent := ConfigContent + 'reachable_host = "' + ReachableHost + '"' + #13#10;
