@@ -54,7 +54,7 @@ public class TrayApp : ApplicationContext
         _miOpenLog = new ToolStripMenuItem("Log öffnen");
         _miOpenLog.Click += (_, _) =>
         {
-            try { Process.Start("explorer.exe", Paths.LogFile); }
+            try { Process.Start("notepad.exe", Paths.LogFile); }
             catch { /* nichts */ }
         };
 

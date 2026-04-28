@@ -16,11 +16,12 @@ builder.Services.AddSingleton<TunnelController>();
 // Config laden (lädt sich bei jedem Reload neu via ServiceState)
 builder.Services.AddSingleton(sp => AppConfig.Load(Paths.ConfigFile));
 
-// Logging ins Event Log und in die Datei
+// Logging: Windows Event Log + File-Log unter ProgramData
 builder.Logging.AddEventLog(settings =>
 {
     settings.SourceName = "wg-autoswitch";
 });
+builder.Logging.AddProvider(new FileLoggerProvider(Paths.LogFile));
 
 builder.Services.AddHostedService<MainWorker>();
 builder.Services.AddHostedService<PipeHostedService>();

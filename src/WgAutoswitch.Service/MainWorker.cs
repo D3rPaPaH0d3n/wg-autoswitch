@@ -59,7 +59,9 @@ public class MainWorker : BackgroundService
             {
                 // Entweder Stop oder Wake-Up
                 if (stoppingToken.IsCancellationRequested) break;
+                var old = _wakeToken;
                 _wakeToken = new CancellationTokenSource();
+                old.Dispose();
             }
         }
     }

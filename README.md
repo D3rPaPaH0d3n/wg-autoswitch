@@ -114,8 +114,8 @@ alles wie zuletzt - kein "Panik-Aus".
 ## Logs
 
 - Windows Event Log: Anwendung, Quelle "wg-autoswitch"
-- `C:\ProgramData\wg-autoswitch\log.txt` (von der File-Logging-Erweiterung,
-  derzeit nur Event-Log konfiguriert - siehe TODO)
+- `C:\ProgramData\wg-autoswitch\log.txt` (Service schreibt mit, bei 1 MB
+  Rotation nach `log.txt.old`)
 
 ## Tray-Icon-Farben
 
@@ -126,8 +126,6 @@ alles wie zuletzt - kein "Panik-Aus".
 
 ## TODO / Erweiterungen
 
-- File-Logging mit Rotation (Serilog wäre sauber)
 - Optional: Settings-Dialog statt nur Notepad
 - Optional: Heim-Erkennung über Cloudflare-Tunnel-Status
 - Optional: per-Tunnel-Konfiguration (verschiedene Tunnel für verschiedene Netze)
-- Installer-MSI oder Inno-Setup-Skript
