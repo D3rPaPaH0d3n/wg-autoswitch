@@ -232,8 +232,10 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  // Config schreiben, bevor der Service gestartet wird
-  if CurStep = ssPostInstall then
+  // Config MUSS vor [Run] (sc start) geschrieben werden, sonst legt der
+  // Service beim ersten Start selbst eine Default-Config an und unsere
+  // FileExists-Prüfung weiter unten verhindert dann das Überschreiben.
+  if CurStep = ssInstall then
     WriteInitialConfig();
 end;
 
