@@ -1,0 +1,61 @@
+name: Build wg-autoswitch
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Publish Service (self-contained, single-file)
+        run: >
+          dotnet publish src\WgAutoswitch.Service\WgAutoswitch.Service.csproj
+          -c Release
+          -r win-x64
+          --self-contained
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+
+      - name: Publish Tray (self-contained, single-file)
+        run: >
+          dotnet publish src\WgAutoswitch.Tray\WgAutoswitch.Tray.csproj
+          -c Release
+          -r win-x64
+          --self-contained
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+
+      - name: Build Installer (Inno Setup)
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\wg-autoswitch.iss'
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wg-autoswitch-installer
+          path: installer\output\*.exe
+          if-no-files-found: error
+
+      - name: Create GitHub Release (only on tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/output/*.exe
+          generate_release_notes: true
