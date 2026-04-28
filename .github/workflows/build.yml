@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -24,6 +24,17 @@ jobs:
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          # Inno Setup verlangt numerisches X.Y.Z für VersionInfo - keine Suffixe.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish Service (self-contained, single-file)
         run: >
@@ -44,12 +55,15 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
 
       - name: Build Installer (Inno Setup)
-        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\wg-autoswitch.iss'
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DMyAppVersion=${{ steps.version.outputs.version }} `
+            installer\wg-autoswitch.iss
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wg-autoswitch-installer
+          name: wg-autoswitch-installer-${{ steps.version.outputs.version }}
           path: installer\output\*.exe
           if-no-files-found: error
 
@@ -57,5 +71,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: wg-autoswitch ${{ steps.version.outputs.version }}
           files: installer/output/*.exe
           generate_release_notes: true
+          body: |
+            **Installer:** `wg-autoswitch-setup-${{ steps.version.outputs.version }}.exe`
+
+            Voraussetzung: [WireGuard für Windows](https://www.wireguard.com/install/)
+            mit mindestens einem eingerichteten Tunnel.
+
+            Beim ersten Start zeigt Windows eine SmartScreen-Warnung
+            ("Unbekannter Herausgeber") - der Installer ist nicht
+            code-signed. "Weitere Infos" → "Trotzdem ausführen".

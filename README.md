@@ -4,6 +4,24 @@ Automatisches Aktivieren/Deaktivieren eines WireGuard-Tunnels unter Windows
 basierend auf der Erkennung des Heimnetzwerks. Mit Tray-Icon zur Statusanzeige
 und Pause-Funktion als Notausschalter.
 
+Schließt eine Lücke des offiziellen WireGuard-Clients für Windows: die
+"Trusted-Networks"-Funktion gibt es nur unter iOS/macOS, nicht unter Windows.
+Diese App erkennt das Heimnetz lokal anhand von SSID, Router-MAC oder einem
+Heim-Gerät - ohne Cloud, ohne externen Dienst.
+
+## Download
+
+Aktuelle Version → [**Releases**](https://github.com/D3rPaPaH0d3n/wg-autoswitch/releases/latest)
+
+`wg-autoswitch-setup-X.Y.Z.exe` herunterladen und ausführen. Dabei:
+
+> ⚠️ Windows zeigt "Unbekannter Herausgeber" / SmartScreen-Warnung, weil der
+> Installer nicht code-signed ist (Zertifikate kosten Geld, die App ist
+> kostenlos). Auf "Weitere Infos" → "Trotzdem ausführen" klicken.
+
+Voraussetzung: [WireGuard für Windows](https://www.wireguard.com/install/) ist
+bereits installiert und mindestens ein Tunnel ist eingerichtet.
+
 ## Aufbau
 
 - **WgAutoswitch.Service** - Windows-Dienst (LocalSystem), macht die eigentliche Arbeit

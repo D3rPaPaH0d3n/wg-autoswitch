@@ -6,9 +6,14 @@
 
 #define MyAppName "WireGuard Auto-Switch"
 #define MyAppShortName "wg-autoswitch"
-#define MyAppVersion "1.0.0"
-#define MyAppPublisher "Markus Kainer"
-#define MyAppURL "https://kainer.co.at"
+; MyAppVersion kann via Kommandozeile überschrieben werden:
+;   ISCC.exe /DMyAppVersion=1.2.3 wg-autoswitch.iss
+; Wird im CI-Workflow aus dem Git-Tag (v1.2.3) abgeleitet.
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0-dev"
+#endif
+#define MyAppPublisher "Markus Kainer (@D3rPaPaH0d3n)"
+#define MyAppURL "https://github.com/D3rPaPaH0d3n/wg-autoswitch"
 #define MyServiceName "wg-autoswitch"
 #define MyServiceExe "WgAutoswitch.Service.exe"
 #define MyTrayExe "WgAutoswitch.Tray.exe"
