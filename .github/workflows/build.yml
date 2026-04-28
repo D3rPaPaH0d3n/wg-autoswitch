@@ -1,7 +1,15 @@
 name: Build wg-autoswitch
 
 on:
+  # Manuell: leer lassen = nur Build-Test (Artifact, kein Release).
+  # Version eintragen (z.B. 1.0.0) = Tag erstellen, bauen, Release veröffentlichen.
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release-Version (X.Y.Z, leer lassen = nur Build-Check ohne Release)'
+        required: false
+        type: string
+  # Falls jemand lokal einen v*-Tag pusht, bauen wir auch.
   push:
     tags:
       - 'v*'
@@ -16,6 +24,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # Tags brauchen wir für die Existenz-Prüfung
+          fetch-depth: 0
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -25,15 +36,33 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
-      - name: Determine version
+      - name: Determine version & validate
         id: version
         shell: bash
         run: |
-          # Inno Setup verlangt numerisches X.Y.Z für VersionInfo - keine Suffixe.
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          set -e
+          if [[ -n "${{ inputs.release_version }}" ]]; then
+            v="${{ inputs.release_version }}"
+            if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Version muss X.Y.Z sein (z.B. 1.0.0), war: $v"
+              exit 1
+            fi
+            if git rev-parse "v$v" >/dev/null 2>&1; then
+              echo "::error::Tag v$v existiert bereits - höhere Version wählen"
+              exit 1
+            fi
+            echo "version=$v"          >> "$GITHUB_OUTPUT"
+            echo "release=true"        >> "$GITHUB_OUTPUT"
+            echo "create_tag=true"     >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            echo "release=true"        >> "$GITHUB_OUTPUT"
+            echo "create_tag=false"    >> "$GITHUB_OUTPUT"
           else
-            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+            # workflow_dispatch ohne Versionseingabe → reiner Test-Build
+            echo "version=0.0.0"       >> "$GITHUB_OUTPUT"
+            echo "release=false"       >> "$GITHUB_OUTPUT"
+            echo "create_tag=false"    >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish Service (self-contained, single-file)
@@ -67,10 +96,23 @@ jobs:
           path: installer\output\*.exe
           if-no-files-found: error
 
-      - name: Create GitHub Release (only on tag push)
-        if: startsWith(github.ref, 'refs/tags/v')
+      # Tag erst NACH erfolgreichem Build erstellen, damit kein "leerer" Tag
+      # entsteht, falls der Build vorher schon scheitert.
+      - name: Create and push release tag
+        if: steps.version.outputs.create_tag == 'true'
+        shell: bash
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.version }}
           name: wg-autoswitch ${{ steps.version.outputs.version }}
           files: installer/output/*.exe
           generate_release_notes: true
